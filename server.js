@@ -6,10 +6,15 @@ const gameCoreModule = require('./gameCore'); // Importujeme celý modul gameCor
 const { rooms, players, clientToRoomMap } = require('./state');
 
 const db = require('./db');
+//nastavení portu
+const WS_PORT = process.env.PORT || 8080;
 
-// --- SERVER KONFIGURACE ---
-const WS_PORT = 8080;
-const wss = new WebSocket.Server({ port: WS_PORT });
+const wss = new WebSocket.Server({ 
+    port: WS_PORT,
+    host: '0.0.0.0' 
+}, () => {
+    console.log(`Server běží a naslouchá na portu: ${WS_PORT}`);
+});
 
 // --- DEKLARACE KLÍČOVÝCH FUNKCÍ ---
 
