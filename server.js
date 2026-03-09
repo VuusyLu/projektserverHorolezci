@@ -319,7 +319,7 @@ function broadcastLobbyUpdate(roomID) {
 // --- WEBSOCKET ŘÍZENÍ SPOJENÍ ---
 
 wss.on('connection', function connection(ws) {
-    console.log('🔗 Nový klient se pokouší připojit (čeká na AUTH).');
+    console.log('🔗 Nový klient se pokouší připojit.');
 
     ws.on('message', function incoming(message) {
         let data;
@@ -330,7 +330,9 @@ wss.on('connection', function connection(ws) {
             return;
         }
 
-        if (data.type === 'AUTH_REQUEST' ||
+        // TADY BYLA CHYBA: Chybělo zde data.type === 'GUEST_JOIN'
+        if (data.type === 'GUEST_JOIN' || // <--- PŘIDÁNO
+            data.type === 'AUTH_REQUEST' ||
             data.type === 'CREATE_ROOM' ||
             data.type === 'JOIN_ROOM' ||
             data.type === 'LEAVE_ROOM' ||
@@ -343,8 +345,12 @@ wss.on('connection', function connection(ws) {
         }
 
         // --- Zpracování Herních Tahů ---
-        
-        if (!ws.playerId) return; 
+        // Tato část vyžaduje, aby hráč už měl playerId (což GUEST_JOIN teprve vytváří)
+        if (!ws.playerId) {
+            console.warn("SERVER: Přijata herní zpráva od neautorizovaného klienta.");
+            return; 
+        }
+
         const roomID = clientToRoomMap.get(ws.playerId); 
         if (!roomID) return; 
 
@@ -355,7 +361,6 @@ wss.on('connection', function connection(ws) {
                 roomID: roomID 
             };
 
-            // Voláme delegovanou funkci z gameCore
             gameCore.handlePlayerGuess(fullGuessData); 
             return;
         }
