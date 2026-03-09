@@ -19,7 +19,10 @@ function initializeDatabase() {
         db.run(`CREATE TABLE IF NOT EXISTS users (
             playerId TEXT PRIMARY KEY,
             username TEXT UNIQUE,
-            password TEXT
+            password TEXT,
+            email TEXT UNIQUE,
+            verificationToken TEXT,
+            isVerified INTEGER DEFAULT 0
         )`);
 
         // 2. Tabulka pro kategorie

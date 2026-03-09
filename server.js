@@ -1,19 +1,66 @@
 // server.js
 const WebSocket = require('ws');
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
+const express = require('express'); // PŘIDÁNO
+const http = require('http');        // PŘIDÁNO
+
+// --- KONFIGURACE EXPRESS A HTTP ---
+const app = express();
+const server = http.createServer(app);
+
 // --- IMPORT MODULŮ ---
 const { generateUniqueID, getRoomData, broadcastToRoom } = require('./utils'); 
-const gameCoreModule = require('./gameCore'); // Importujeme celý modul gameCore
+const gameCoreModule = require('./gameCore'); 
 const { rooms, players, clientToRoomMap } = require('./state');
-
 const db = require('./db');
-//nastavení portu
+
 const WS_PORT = process.env.PORT || 8080;
 
-const wss = new WebSocket.Server({ 
-    port: WS_PORT,
-    host: '0.0.0.0' 
-}, () => {
-    console.log(`Server běží a naslouchá na portu: ${WS_PORT}`);
+// --- INICIALIZACE WEBSOCKET SERVERU ---
+// Teď už neportujeme přímo tady, ale navážeme se na existující HTTP server
+const wss = new WebSocket.Server({ server });
+
+// Nastavení Webglobe SMTP
+const transporter = nodemailer.createTransport({
+    host: 'mail.webglobe.cz',
+    port: 465,
+    secure: true,
+    auth: {
+        user: 'noreply@horolezcihra.online',
+        pass: 'Klukynek10' 
+    }
+});
+
+// --- HTTP ENDPOINT PRO OVĚŘENÍ E-MAILU ---
+// Na tohle klikne hráč v prohlížeči
+app.get('/verify', (req, res) => {
+    const token = req.query.token;
+
+    if (!token) {
+        return res.status(400).send("<h1>Chyba</h1><p>Neplatný ověřovací odkaz.</p>");
+    }
+
+    db.run(
+        "UPDATE users SET isVerified = 1, verificationToken = NULL WHERE verificationToken = ?", 
+        [token], 
+        function(err) {
+            if (err) {
+                console.error("Chyba DB při verifikaci:", err);
+                return res.status(500).send("Chyba serveru.");
+            }
+            if (this.changes === 0) {
+                return res.status(400).send("<h1>Odkaz neplatný</h1><p>Účet už byl ověřen nebo odkaz vypršel.</p>");
+            }
+            
+            res.send(`
+                <div style="text-align:center; font-family: sans-serif; padding-top: 50px;">
+                    <h1 style="color: #4CAF50;">E-mail úspěšně potvrzen! 🧗‍♂️</h1>
+                    <p>Tvůj účet je nyní aktivní. Můžeš se vrátit do Unity a přihlásit se.</p>
+                </div>
+            `);
+        }
+    );
 });
 
 // --- DEKLARACE KLÍČOVÝCH FUNKCÍ ---
@@ -147,49 +194,130 @@ async function handleSystemMessages(ws, data) {
 
     if (type === 'AUTH_REQUEST') {
     if (authType === 'REGISTER') {
-        db.get("SELECT * FROM users WHERE username = ?", [username], (err, row) => {
-            if (row) {
-                ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Uživatel již existuje.' }));
-            } else {
-                const newPlayerId = generateUniqueID(8);
-                // Zápis do DB
-                db.run("INSERT INTO users (playerId, username, password) VALUES (?, ?, ?)", [newPlayerId, username, password], function(err) {
-                    if (err) {
-                        ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba při registraci.' }));
-                    } else {
-                        const response = { type: 'AUTH_SUCCESS', playerId: newPlayerId, message: `Vítej, ${username}! Registrace OK.` };
-                        
-                        // Přidání do aktivních hráčů v paměti
-                        players.set(newPlayerId, { ws, id: newPlayerId, username, score: 0, climberPosition: 0 });
-                        ws.playerId = newPlayerId;
-                        ws.username = username;
-                        
-                        ws.send(JSON.stringify(response));
-                    }
-                });
-            }
-        });
+    const { email } = data; // Unity nám teď musí poslat i email
+
+    // 1. Ochrana proti zneužití jmen (Host, Admin...)
+    const lowerUsername = username.toLowerCase();
+    if (lowerUsername.startsWith('host') || lowerUsername.includes('admin') || lowerUsername.includes('guest')) {
+        ws.send(JSON.stringify({ 
+            type: 'AUTH_FAILURE', 
+            message: 'Jméno nesmí obsahovat slovo "Host", "Admin" nebo "Guest".' 
+        }));
         return;
     }
 
+    // 2. Kontrola, zda uživatel nebo e-mail už v DB není
+    db.get("SELECT * FROM users WHERE username = ? OR email = ?", [username, email], (err, row) => {
+        if (err) {
+            console.error("DB Error:", err);
+            ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba serveru při kontrole dat.' }));
+            return;
+        }
+
+        if (row) {
+            const reason = row.username === username ? "Jméno" : "E-mail";
+            ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: `${reason} již existuje.` }));
+            return;
+        }
+
+        // 3. Vše v pořádku -> Vytvoříme ID a Token
+        const newPlayerId = generateUniqueID(8);
+        const verificationToken = crypto.randomBytes(32).toString('hex');
+
+        // 4. Zápis do DB (isVerified = 0)
+        db.run(
+            "INSERT INTO users (playerId, username, password, email, verificationToken, isVerified) VALUES (?, ?, ?, ?, ?, ?)", 
+            [newPlayerId, username, password, email, verificationToken, 0], 
+            function(err) {
+                if (err) {
+                    console.error("Insert Error:", err);
+                    ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba při vytváření účtu.' }));
+                } else {
+                    // 5. Příprava a odeslání e-mailu
+                    // Pozor: verifyUrl budeme muset upravit, až budeš mít server na Renderu
+                    const verifyUrl = `http://localhost:8080/verify?token=${verificationToken}`;
+                    
+                    const mailOptions = {
+                        from: '"Horolezci Hra" <noreply@horolezcihra.online>',
+                        to: email,
+                        subject: 'Potvrzení registrace - Horolezci Hra',
+                        html: `
+                            <div style="font-family: Arial, sans-serif; border: 1px solid #ddd; padding: 20px; border-radius: 10px;">
+                                <h2 style="color: #4CAF50;">Vítej v týmu, ${username}!</h2>
+                                <p>Děkujeme za registraci. Posledním krokem je potvrzení tvého e-mailu.</p>
+                                <a href="${verifyUrl}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0;">AKTIVOVAT ÚČET</a>
+                                <p style="font-size: 0.8em; color: #777;">Pokud tlačítko nefunguje, klikni na odkaz zde: ${verifyUrl}</p>
+                            </div>
+                        `
+                    };
+
+                    transporter.sendMail(mailOptions, (error, info) => {
+                        if (error) {
+                            console.error("Chyba odesílání mailu:", error);
+                            // I když mail selže, uživatel je v DB. Můžeme mu říct, ať zkusí "Znovu poslat" později.
+                            ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Účet vytvořen, ale e-mail se nepodařilo odeslat. Kontaktuj podporu.' }));
+                        } else {
+                            console.log(`[MAIL] Odeslán registrační e-mail pro: ${username}`);
+                            ws.send(JSON.stringify({ 
+                                type: 'AUTH_SUCCESS', 
+                                playerId: newPlayerId, 
+                                message: 'Registrace úspěšná! Potvrď svůj e-mail (zkontroluj i Spam).' 
+                            }));
+                        }
+                    });
+                }
+            }
+        );
+    });
+    return;
+}
+
     if (authType === 'LOGIN') {
-        // Hledání v DB
-        db.get("SELECT * FROM users WHERE username = ? AND password = ?", [username, password], (err, row) => {
+    const { username, email, password } = data;
+
+    // Hledáme uživatele, kde sedí BUĎ jméno, NEBO email, a k tomu VŽDY heslo
+    db.get(
+        "SELECT * FROM users WHERE (username = ? OR email = ?) AND password = ?", 
+        [username, email, password], 
+        (err, row) => {
+            if (err) {
+                console.error("Login DB Error:", err);
+                ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba databáze.' }));
+                return;
+            }
+
             if (row) {
-                const response = { type: 'AUTH_SUCCESS', playerId: row.playerId, message: `Vítej zpět, ${username}!` };
-                
-                // Přidání do aktivních hráčů (online list)
-                players.set(row.playerId, { ws, id: row.playerId, username: row.username, score: 0, climberPosition: 0 });
+                // KONTROLA AKTIVACE (Nodemailer v akci)
+                if (row.isVerified === 0) {
+                    ws.send(JSON.stringify({ 
+                        type: 'AUTH_FAILURE', 
+                        message: 'Účet není aktivován. Klikněte na odkaz v e-mailu!' 
+                    }));
+                    return;
+                }
+
+                // Úspěšné přihlášení
+                const response = { 
+                    type: 'AUTH_SUCCESS', 
+                    playerId: row.playerId, 
+                    message: `Vítej zpět, ${row.username}!` 
+                };
+
+                players.set(row.playerId, { 
+                    ws, id: row.playerId, username: row.username, score: 0, climberPosition: 0, isGuest: false 
+                });
+
                 ws.playerId = row.playerId;
                 ws.username = row.username;
-                
                 ws.send(JSON.stringify(response));
+                console.log(`[LOGIN] Hráč ${row.username} se přihlásil.`);
             } else {
-                ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Neplatné jméno nebo heslo.' }));
+                ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Neplatné jméno/e-mail nebo heslo.' }));
             }
-        });
-        return;
-    }
+        }
+    );
+    return;
+}
 }
     if (!ws.playerId) return; 
     const playerId = ws.playerId;
@@ -382,4 +510,6 @@ wss.on('connection', function connection(ws) {
     });
 });
 
-console.log(`✅ WebSocket server běží a čeká na připojení na ws://localhost:${WS_PORT}`);
+server.listen(WS_PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server běží na portu ${WS_PORT} (HTTP + WebSocket)`);
+});
