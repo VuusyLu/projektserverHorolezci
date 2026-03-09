@@ -108,6 +108,43 @@ async function handleSystemMessages(ws, data) {
     const { type, username, password, authType, roomID } = data;
     let response;
 
+    if (type === 'GUEST_JOIN') {
+        let isUnique = false;
+        let guestNum, guestId, guestUsername;
+        
+        while (!isUnique) {
+            guestNum = Math.floor(1000 + Math.random() * 9000);
+            guestId = `GUEST_${guestNum}`;
+            guestUsername = `Host${guestNum}`;
+
+            if (!players.has(guestId)) {
+                isUnique = true;
+            }
+        }
+
+        // DŮLEŽITÉ: Struktura musí odpovídat tvému utils.getRoomData
+        players.set(guestId, { 
+            ws: ws, 
+            id: guestId, 
+            username: guestUsername, 
+            score: 0, 
+            climberPosition: 0,
+            isGuest: true 
+        });
+
+        ws.playerId = guestId;
+        ws.username = guestUsername;
+
+        console.log(`[SERVER] Vytvořen host: ${guestUsername}`);
+        
+        ws.send(JSON.stringify({ 
+            type: 'AUTH_SUCCESS', 
+            playerId: guestId, 
+            message: `Jsi připojen jako ${guestUsername}` 
+        }));
+        return;
+    }
+
     if (type === 'AUTH_REQUEST') {
     if (authType === 'REGISTER') {
         db.get("SELECT * FROM users WHERE username = ?", [username], (err, row) => {
