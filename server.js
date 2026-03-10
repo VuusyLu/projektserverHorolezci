@@ -1,9 +1,9 @@
-// server.js
 const WebSocket = require('ws');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend'); // Změněno z nodemailer
+const resend = new Resend('re_44KUgwsT_5chcpZZxWmdbjkAESncmxkRP');
 const crypto = require('crypto');
-const express = require('express'); // PŘIDÁNO
-const http = require('http');        // PŘIDÁNO
+const express = require('express');
+const http = require('http');
 
 // --- KONFIGURACE EXPRESS A HTTP ---
 const app = express();
@@ -18,27 +18,7 @@ const db = require('./db');
 const WS_PORT = process.env.PORT || 8080;
 
 // --- INICIALIZACE WEBSOCKET SERVERU ---
-// Teď už neportujeme přímo tady, ale navážeme se na existující HTTP server
 const wss = new WebSocket.Server({ server });
-
-// Nastavení Webglobe SMTP
-const transporter = nodemailer.createTransport({
-    host: 'smtpx.stable.cz',
-    port: 587,
-    secure: false, // Pro port 587 nechte false
-    auth: {
-        user: 'noreply@horolezcihra.online',
-        pass: 'Klukynek10' 
-    },
-    // TATO ČÁST JE KLÍČOVÁ PRO VYŘEŠENÍ CHYBY ENETUNREACH
-    connectionTimeout: 10000, // 10 sekund na pokus o spojení
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
-    family: 4, // <--- VYNUTÍ IPv4 (vyřeší ten problém s ENETUNREACH)
-    tls: {
-        rejectUnauthorized: false // Povolí spojení i když Render nezná certifikát Webglobe
-    }
-});
 
 // --- HTTP ENDPOINT PRO OVĚŘENÍ E-MAILU ---
 // Na tohle klikne hráč v prohlížeči
@@ -203,12 +183,20 @@ async function handleSystemMessages(ws, data) {
     if (type === 'AUTH_REQUEST') {
         console.log(`🔐 AuthRequest detekován. Typ: ${data.authType}, Jméno: ${data.username}`); // <-- PŘIDAT
    if (authType === 'REGISTER') {
-        console.log("📝 Start registrace pro: " + username);
+        console.log("📝 Start registrace přes Resend API pro: " + username);
         const { email } = data;
 
         db.get("SELECT * FROM users WHERE username = ? OR email = ?", [username, email], (err, row) => {
+            if (err) {
+                console.error("Chyba DB:", err);
+                ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba serveru při kontrole dat.' }));
+                return;
+            }
+
             if (row) {
-                ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Jméno nebo e-mail již existuje.' }));
+                console.log("⚠️ Uživatel nebo e-mail již existuje: " + username);
+                const reason = row.username === username ? "Jméno" : "E-mail";
+                ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: `${reason} již existuje.` }));
                 return;
             }
 
@@ -220,38 +208,42 @@ async function handleSystemMessages(ws, data) {
                 [newPlayerId, username, password, email, verificationToken, 0], 
                 function(err) {
                     if (err) {
-                        ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba zápisu do databáze.' }));
+                        console.error("Insert Error:", err);
+                        ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba při vytváření účtu.' }));
                         return;
                     }
 
-                    console.log("✅ Uživatel uložen jako neaktivní. Pokouším se odeslat mail...");
+                    // Nezapomeň si v této URL zkontrolovat, zda sedí název tvé appky na Renderu
+                    const verifyUrl = `https://horolezci-server.onrender.com/verify?token=${verificationToken}`;
 
-                    // URL pro Render (použije tvoji aktuální doménu)
-                    const verifyUrl = `https://horolezci-server.onrender.com/verify?token=${verificationToken}`; 
-                    
-                    const mailOptions = {
-                        from: 'noreply@horolezcihra.online',
+                    console.log("📧 Volám Resend API pro: " + email);
+
+                    resend.emails.send({
+                        from: 'Horolezci Hra <onboarding@resend.dev>',
                         to: email,
-                        subject: 'Aktivace účtu - Horolezci',
-                        html: `<h3>Vítej, ${username}!</h3><p>Klikni pro aktivaci:</p><a href="${verifyUrl}">${verifyUrl}</a>`
-                    };
-
-                    // ODESLÁNÍ MAILU S CHYBOVÝM OŠETŘENÍM
-                    transporter.sendMail(mailOptions, (error, info) => {
-                        if (error) {
-                            console.error("❌ CHYBA SMTP:", error.message);
-                            // Informujeme Unity, že registrace sice proběhla, ale mail má problém
-                            ws.send(JSON.stringify({ 
-                                type: 'AUTH_FAILURE', 
-                                message: 'Účet vytvořen, ale e-mail se nepodařilo odeslat. Zkus to později.' 
-                            }));
-                        } else {
-                            console.log("📧 Mail úspěšně odeslán!");
-                            ws.send(JSON.stringify({ 
-                                type: 'AUTH_SUCCESS', 
-                                message: 'Registrace úspěšná! Nyní potvrď e-mail a pak se přihlas.' 
-                            }));
-                        }
+                        subject: 'Aktivace účtu - Horolezci Hra',
+                        html: `
+                            <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+                                <h2 style="color: #4CAF50;">Vítej v týmu, ${username}!</h2>
+                                <p>Tvůj účet byl vytvořen. Pro aktivaci klikni na tlačítko níže:</p>
+                                <div style="text-align: center; margin: 30px 0;">
+                                    <a href="${verifyUrl}" style="background: #4CAF50; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">AKTIVOVAT ÚČET</a>
+                                </div>
+                                <p style="font-size: 0.8em; color: #888;">Pokud tlačítko nefunguje, použij tento odkaz: <br> ${verifyUrl}</p>
+                            </div>
+                        `
+                    }).then(() => {
+                        console.log("✅ RESEND: Mail úspěšně odeslán!");
+                        ws.send(JSON.stringify({ 
+                            type: 'AUTH_SUCCESS', 
+                            message: 'Registrace úspěšná! Potvrď svůj e-mail (zkontroluj i Spam).' 
+                        }));
+                    }).catch(error => {
+                        console.error("❌ RESEND ERROR:", error);
+                        ws.send(JSON.stringify({ 
+                            type: 'AUTH_FAILURE', 
+                            message: 'Účet vytvořen, ale nepodařilo se odeslat aktivační e-mail.' 
+                        }));
                     });
                 }
             );
@@ -260,51 +252,49 @@ async function handleSystemMessages(ws, data) {
     }
 
     if (authType === 'LOGIN') {
-    const { username, email, password } = data;
+        const { username, email, password } = data;
 
-    // Hledáme uživatele, kde sedí BUĎ jméno, NEBO email, a k tomu VŽDY heslo
-    db.get(
-        "SELECT * FROM users WHERE (username = ? OR email = ?) AND password = ?", 
-        [username, email, password], 
-        (err, row) => {
-            if (err) {
-                console.error("Login DB Error:", err);
-                ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba databáze.' }));
-                return;
-            }
-
-            if (row) {
-                // KONTROLA AKTIVACE (Nodemailer v akci)
-                if (row.isVerified === 0) {
-                    ws.send(JSON.stringify({ 
-                        type: 'AUTH_FAILURE', 
-                        message: 'Účet není aktivován. Klikněte na odkaz v e-mailu!' 
-                    }));
+        db.get(
+            "SELECT * FROM users WHERE (username = ? OR email = ?) AND password = ?", 
+            [username, email, password], 
+            (err, row) => {
+                if (err) {
+                    console.error("Login DB Error:", err);
+                    ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba databáze.' }));
                     return;
                 }
 
-                // Úspěšné přihlášení
-                const response = { 
-                    type: 'AUTH_SUCCESS', 
-                    playerId: row.playerId, 
-                    message: `Vítej zpět, ${row.username}!` 
-                };
+                if (row) {
+                    // Tady kontrolujeme, zda uživatel klikl na ten odkaz v mailu
+                    if (row.isVerified === 0) {
+                        ws.send(JSON.stringify({ 
+                            type: 'AUTH_FAILURE', 
+                            message: 'Účet není aktivován. Klikni na odkaz v e-mailu!' 
+                        }));
+                        return;
+                    }
 
-                players.set(row.playerId, { 
-                    ws, id: row.playerId, username: row.username, score: 0, climberPosition: 0, isGuest: false 
-                });
+                    const response = { 
+                        type: 'AUTH_SUCCESS', 
+                        playerId: row.playerId, 
+                        message: `Vítej zpět, ${row.username}!` 
+                    };
 
-                ws.playerId = row.playerId;
-                ws.username = row.username;
-                ws.send(JSON.stringify(response));
-                console.log(`[LOGIN] Hráč ${row.username} se přihlásil.`);
-            } else {
-                ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Neplatné jméno/e-mail nebo heslo.' }));
+                    players.set(row.playerId, { 
+                        ws, id: row.playerId, username: row.username, score: 0, climberPosition: 0, isGuest: false 
+                    });
+
+                    ws.playerId = row.playerId;
+                    ws.username = row.username;
+                    ws.send(JSON.stringify(response));
+                    console.log(`[LOGIN] Hráč ${row.username} se přihlásil.`);
+                } else {
+                    ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Neplatné jméno/e-mail nebo heslo.' }));
+                }
             }
-        }
-    );
-    return;
-}
+        );
+        return;
+    }
 }
     if (!ws.playerId) return; 
     const playerId = ws.playerId;
