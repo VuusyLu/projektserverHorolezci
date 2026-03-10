@@ -29,6 +29,7 @@ app.get('/verify', (req, res) => {
         return res.status(400).send("<h1>Chyba</h1><p>Neplatný ověřovací odkaz.</p>");
     }
 
+    // Najdeme uživatele s tímto tokenem a aktivujeme ho
     db.run(
         "UPDATE users SET isVerified = 1, verificationToken = NULL WHERE verificationToken = ?", 
         [token], 
