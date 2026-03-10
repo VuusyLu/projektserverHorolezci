@@ -25,10 +25,18 @@ const wss = new WebSocket.Server({ server });
 const transporter = nodemailer.createTransport({
     host: 'mail.webglobe.cz',
     port: 587,
-    secure: false,
+    secure: false, // Pro port 587 nechte false
     auth: {
         user: 'noreply@horolezcihra.online',
         pass: 'Klukynek10' 
+    },
+    // TATO ČÁST JE KLÍČOVÁ PRO VYŘEŠENÍ CHYBY ENETUNREACH
+    connectionTimeout: 10000, // 10 sekund na pokus o spojení
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
+    family: 4, // <--- VYNUTÍ IPv4 (vyřeší ten problém s ENETUNREACH)
+    tls: {
+        rejectUnauthorized: false // Povolí spojení i když Render nezná certifikát Webglobe
     }
 });
 
@@ -222,7 +230,7 @@ async function handleSystemMessages(ws, data) {
                     const verifyUrl = `https://horolezci-server.onrender.com/verify?token=${verificationToken}`; 
                     
                     const mailOptions = {
-                        from: '"Horolezci Hra" <noreply@horolezcihra.online>',
+                        from: 'noreply@horolezcihra.online',
                         to: email,
                         subject: 'Aktivace účtu - Horolezci',
                         html: `<h3>Vítej, ${username}!</h3><p>Klikni pro aktivaci:</p><a href="${verifyUrl}">${verifyUrl}</a>`
