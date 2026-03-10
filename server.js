@@ -215,8 +215,7 @@ async function handleSystemMessages(ws, data) {
                     }
 
                     // Nezapomeň si v této URL zkontrolovat, zda sedí název tvé appky na Renderu
-                    const verifyUrl = `https://horolezci-server.onrender.com/verify?token=${verificationToken}`;
-
+                    const verifyUrl = `https://projektserverhorolezci.onrender.com/verify?token=${verificationToken}`;
                     console.log("📧 Volám Resend API pro: " + email);
 
                     resend.emails.send({
