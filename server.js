@@ -23,7 +23,7 @@ const wss = new WebSocket.Server({ server });
 
 // Nastavení Webglobe SMTP
 const transporter = nodemailer.createTransport({
-    host: 'mail.webglobe.cz',
+    host: 'smtpx.stable.cz',
     port: 587,
     secure: false, // Pro port 587 nechte false
     auth: {
