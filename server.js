@@ -193,7 +193,9 @@ async function handleSystemMessages(ws, data) {
     }
 
     if (type === 'AUTH_REQUEST') {
+        console.log(`🔐 AuthRequest detekován. Typ: ${data.authType}, Jméno: ${data.username}`); // <-- PŘIDAT
     if (authType === 'REGISTER') {
+        console.log("📝 Začínám registraci v DB...");
     const { email } = data; // Unity nám teď musí poslat i email
 
     // 1. Ochrana proti zneužití jmen (Host, Admin...)
@@ -450,6 +452,7 @@ wss.on('connection', function connection(ws) {
     console.log('🔗 Nový klient se pokouší připojit.');
 
     ws.on('message', function incoming(message) {
+        console.log('📥 SERVER PŘIJAL DATA:', message.toString()); // <-- PŘIDAT TENTO LOG
         let data;
         try {
             data = JSON.parse(message);
