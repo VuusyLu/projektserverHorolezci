@@ -24,8 +24,8 @@ const wss = new WebSocket.Server({ server });
 // Nastavení Webglobe SMTP
 const transporter = nodemailer.createTransport({
     host: 'mail.webglobe.cz',
-    port: 465,
-    secure: true,
+    port: 587,
+    secure: false,
     auth: {
         user: 'noreply@horolezcihra.online',
         pass: 'Klukynek10' 
@@ -195,84 +195,78 @@ async function handleSystemMessages(ws, data) {
     if (type === 'AUTH_REQUEST') {
         console.log(`🔐 AuthRequest detekován. Typ: ${data.authType}, Jméno: ${data.username}`); // <-- PŘIDAT
     if (authType === 'REGISTER') {
-        console.log("📝 Začínám registraci v DB...");
-    const { email } = data; // Unity nám teď musí poslat i email
+        console.log("📝 Začínám registraci v DB pro: " + username);
+        const { email } = data;
 
-    // 1. Ochrana proti zneužití jmen (Host, Admin...)
-    const lowerUsername = username.toLowerCase();
-    if (lowerUsername.startsWith('host') || lowerUsername.includes('admin') || lowerUsername.includes('guest')) {
-        ws.send(JSON.stringify({ 
-            type: 'AUTH_FAILURE', 
-            message: 'Jméno nesmí obsahovat slovo "Host", "Admin" nebo "Guest".' 
-        }));
-        return;
-    }
+        // 1. Kontrola, zda uživatel nebo e-mail už neexistuje
+        db.get("SELECT * FROM users WHERE username = ? OR email = ?", [username, email], (err, row) => {
+            if (err) {
+                console.error("DB Error:", err);
+                ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba serveru při kontrole dat.' }));
+                return;
+            }
 
-    // 2. Kontrola, zda uživatel nebo e-mail už v DB není
-    db.get("SELECT * FROM users WHERE username = ? OR email = ?", [username, email], (err, row) => {
-        if (err) {
-            console.error("DB Error:", err);
-            ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba serveru při kontrole dat.' }));
-            return;
-        }
+            if (row) {
+                console.log("⚠️ Uživatel nebo e-mail již existuje: " + username);
+                const reason = row.username === username ? "Jméno" : "E-mail";
+                ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: `${reason} již existuje.` }));
+                return;
+            }
 
-        if (row) {
-            const reason = row.username === username ? "Jméno" : "E-mail";
-            ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: `${reason} již existuje.` }));
-            return;
-        }
+            // 2. Vše v pořádku -> Vytvoříme ID a Token
+            const newPlayerId = generateUniqueID(8);
+            const verificationToken = crypto.randomBytes(32).toString('hex');
 
-        // 3. Vše v pořádku -> Vytvoříme ID a Token
-        const newPlayerId = generateUniqueID(8);
-        const verificationToken = crypto.randomBytes(32).toString('hex');
+            // 3. Zápis do DB (isVerified = 0)
+            db.run(
+                "INSERT INTO users (playerId, username, password, email, verificationToken, isVerified) VALUES (?, ?, ?, ?, ?, ?)", 
+                [newPlayerId, username, password, email, verificationToken, 0], 
+                function(err) {
+                    if (err) {
+                        console.error("Insert Error:", err);
+                        ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba při vytváření účtu.' }));
+                        return;
+                    }
 
-        // 4. Zápis do DB (isVerified = 0)
-        db.run(
-            "INSERT INTO users (playerId, username, password, email, verificationToken, isVerified) VALUES (?, ?, ?, ?, ?, ?)", 
-            [newPlayerId, username, password, email, verificationToken, 0], 
-            function(err) {
-                if (err) {
-                    console.error("Insert Error:", err);
-                    ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Chyba při vytváření účtu.' }));
-                } else {
-                    // 5. Příprava a odeslání e-mailu
-                    // Pozor: verifyUrl budeme muset upravit, až budeš mít server na Renderu
-                    const verifyUrl = `http://localhost:8080/verify?token=${verificationToken}`;
+                    console.log("✅ Uživatel zapsán do DB. Odpovídám Unity.");
+
+                    // --- KLÍČOVÁ ZMĚNA: Odpovíme Unity HNED, nečekáme na mail ---
+                    ws.send(JSON.stringify({ 
+                        type: 'AUTH_SUCCESS', 
+                        playerId: newPlayerId, 
+                        message: 'Registrace úspěšná! Potvrď svůj e-mail (zkontroluj i Spam).' 
+                    }));
+
+                    // 4. Odeslání e-mailu na pozadí
+                    // Pokud jsi na Renderu, localhost nebude fungovat, použijeme relativní host z hlavičky (pokud je dostupný) nebo tvou URL
+                    const verifyUrl = `http://localhost:8080/verify?token=${verificationToken}`; 
                     
                     const mailOptions = {
                         from: '"Horolezci Hra" <noreply@horolezcihra.online>',
                         to: email,
                         subject: 'Potvrzení registrace - Horolezci Hra',
                         html: `
-                            <div style="font-family: Arial, sans-serif; border: 1px solid #ddd; padding: 20px; border-radius: 10px;">
-                                <h2 style="color: #4CAF50;">Vítej v týmu, ${username}!</h2>
-                                <p>Děkujeme za registraci. Posledním krokem je potvrzení tvého e-mailu.</p>
-                                <a href="${verifyUrl}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0;">AKTIVOVAT ÚČET</a>
-                                <p style="font-size: 0.8em; color: #777;">Pokud tlačítko nefunguje, klikni na odkaz zde: ${verifyUrl}</p>
+                            <div style="font-family: Arial, sans-serif; padding: 20px;">
+                                <h2>Vítej, ${username}!</h2>
+                                <p>Pro aktivaci účtu klikni na tlačítko:</p>
+                                <a href="${verifyUrl}" style="background: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">AKTIVOVAT ÚČET</a>
                             </div>
                         `
                     };
 
+                    console.log("📧 Odesílám mail přes SMTP (587)...");
                     transporter.sendMail(mailOptions, (error, info) => {
                         if (error) {
-                            console.error("Chyba odesílání mailu:", error);
-                            // I když mail selže, uživatel je v DB. Můžeme mu říct, ať zkusí "Znovu poslat" později.
-                            ws.send(JSON.stringify({ type: 'AUTH_FAILURE', message: 'Účet vytvořen, ale e-mail se nepodařilo odeslat. Kontaktuj podporu.' }));
+                            console.error("❌ CHYBA MAILU:", error.message);
                         } else {
-                            console.log(`[MAIL] Odeslán registrační e-mail pro: ${username}`);
-                            ws.send(JSON.stringify({ 
-                                type: 'AUTH_SUCCESS', 
-                                playerId: newPlayerId, 
-                                message: 'Registrace úspěšná! Potvrď svůj e-mail (zkontroluj i Spam).' 
-                            }));
+                            console.log("📧 MAIL OK:", info.response);
                         }
                     });
                 }
-            }
-        );
-    });
-    return;
-}
+            );
+        });
+        return;
+    }
 
     if (authType === 'LOGIN') {
     const { username, email, password } = data;
