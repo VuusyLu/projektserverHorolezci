@@ -345,14 +345,18 @@ async function handleSystemMessages(ws, data) {
     if (type === 'JOIN_ROOM') {
         let roomToJoinID = roomID;
         if (roomID === 'RANDOM') {
-            const availableRoom = Array.from(rooms.values()).find(r => Array.from(players.keys()).filter(p => clientToRoomMap.get(p) === r.id).length < 4);
-            if (availableRoom) {
-                roomToJoinID = availableRoom.id;
-            } else {
-                ws.send(JSON.stringify({ type: 'ROOM_FAILURE', message: 'Nenašli jsme volnou místnost.' }));
-                return;
-            }
-        }
+    const availableRoom = Array.from(rooms.values()).find(r => 
+        r.isPublic === true && // Místnost musí být VEŘEJNÁ
+        Array.from(players.keys()).filter(p => clientToRoomMap.get(p) === r.id).length < 4
+    );
+    
+    if (availableRoom) {
+        roomToJoinID = availableRoom.id;
+    } else {
+        ws.send(JSON.stringify({ type: 'ROOM_FAILURE', message: 'Žádná veřejná místnost není volná.' }));
+        return;
+    }
+}
         
         const roomToJoin = rooms.get(roomToJoinID);
         if (roomToJoin) {
