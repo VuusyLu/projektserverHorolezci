@@ -329,6 +329,7 @@ async function handleSystemMessages(ws, data) {
         const newRoom = {
             id: newRoomID,
             hostID: playerId,
+            isPublic: true,
             targetClimbHeight: 0, 
             remainingLetters: [],
             guessedLetters: new Set(),
