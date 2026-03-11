@@ -491,6 +491,7 @@ wss.on('connection', function connection(ws) {
             data.type === 'CREATE_ROOM' ||
             data.type === 'JOIN_ROOM' ||
             data.type === 'LEAVE_ROOM' ||
+            data.type === 'SET_LOBBY_PUBLIC' ||
             data.type === 'START_GAME' ||
             data.type === 'START_SOLO_GAME' ||
             data.type === 'START_DAILY_CHALLENGE'
