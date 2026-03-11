@@ -144,25 +144,30 @@ async function handleSystemMessages(ws, data) {
     const { type, username, password, authType, roomID } = data;
     let response;
     if (type === 'LOGOUT_REQUEST') {
-        console.log(`👤 Odhlášení hráče: ${ws.username} (ID: ${ws.playerId})`);
+        // Použijeme volitelné řetězení nebo náhradní text, aby log nespadl
+        const oldName = ws.username || "Neznámý";
+        const oldId = ws.playerId || "Neznámé ID";
+        
+        console.log(`👤 Odhlášení hráče: ${oldName} (${oldId})`);
 
-        // 1. Pokud byl hráč v místnosti, odpojíme ho, aby nezůstal viset v lobby
-        const roomID = clientToRoomMap.get(ws.playerId);
-        if (roomID) {
-            handleSystemMessages(ws, { type: 'LEAVE_ROOM', roomID: roomID });
+        // 1. Odpojení z místnosti
+        if (ws.playerId) {
+            const roomID = clientToRoomMap.get(ws.playerId);
+            if (roomID) {
+                // Voláme přímo logiku pro opuštění
+                handleSystemMessages(ws, { type: 'LEAVE_ROOM', roomID: roomID });
+            }
+            // Smažeme ho ze seznamu hráčů
+            players.delete(ws.playerId);
         }
 
-        // 2. Odstraníme jeho identitu ze seznamu aktivních hráčů
-        players.delete(ws.playerId);
-        
-        // 3. Resetujeme identifikátory na aktuálním spojení
         ws.playerId = null;
         ws.username = null;
 
-        // 4. Okamžitě mu přidělíme novou identitu Hosta (stejně jako při startu)
+        console.log("🔄 Generuji novou identitu Hosta...");
         handleSystemMessages(ws, { type: 'GUEST_JOIN' });
         
-        console.log("✅ Odhlášení dokončeno, klientovi odeslána nová Host identita.");
+        console.log("✅ Odhlášení dokončeno.");
         return;
     }
 
