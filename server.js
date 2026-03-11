@@ -368,16 +368,33 @@ async function handleSystemMessages(ws, data) {
         const currentRoomID = clientToRoomMap.get(playerId);
         if (!currentRoomID) return;
         
-        clientToRoomMap.delete(playerId);
         const roomState = rooms.get(currentRoomID);
+        clientToRoomMap.delete(playerId); // Hráč už v místnosti není
         
         if (roomState && roomState.hostID === playerId) {
+            broadcastToRoom(currentRoomID, JSON.stringify({ 
+                type: 'ROOM_CLOSED', 
+                message: 'Hostitel opustil místnost.' 
+            }));
+
             rooms.delete(currentRoomID);
-            broadcastToRoom(currentRoomID, JSON.stringify({ type: 'ROOM_CLOSED', message: 'Hostitel opustil místnost.' }));
+            
             console.log(`SERVER: Místnost ${currentRoomID} zrušena (hostitel odešel).`);
             return;
         }
+
         broadcastLobbyUpdate(currentRoomID);
+        return;
+    }
+    if (type === 'SET_LOBBY_PUBLIC') {
+        const currentRoomID = clientToRoomMap.get(playerId);
+        const roomState = rooms.get(currentRoomID);
+        
+        if (roomState && roomState.hostID === playerId) {
+            roomState.isPublic = data.value; // Uložíme true/false
+            console.log(`Místnost ${currentRoomID} je nyní ${data.value ? 'VEŘEJNÁ' : 'SOUKROMÁ'}`);
+            broadcastLobbyUpdate(currentRoomID); // Rozešleme info všem
+        }
         return;
     }
     
@@ -440,6 +457,7 @@ function broadcastLobbyUpdate(roomID) {
         type: 'LOBBY_UPDATE',
         roomID: roomID,
         hostID: room.hostID,
+        isPublic: room.isPublic || false, // <--- PŘIDÁNO SEM
         players: allPlayersData,
     };
     broadcastToRoom(roomID, JSON.stringify(message));
