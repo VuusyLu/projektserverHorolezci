@@ -144,28 +144,26 @@ async function handleSystemMessages(ws, data) {
     const { type, username, password, authType, roomID } = data;
     let response;
     if (type === 'LOGOUT_REQUEST') {
-        // Použijeme volitelné řetězení nebo náhradní text, aby log nespadl
         const oldName = ws.username || "Neznámý";
         const oldId = ws.playerId || "Neznámé ID";
-        
         console.log(`👤 Odhlášení hráče: ${oldName} (${oldId})`);
 
-        // 1. Odpojení z místnosti
         if (ws.playerId) {
             const roomID = clientToRoomMap.get(ws.playerId);
             if (roomID) {
-                // Voláme přímo logiku pro opuštění
-                handleSystemMessages(ws, { type: 'LEAVE_ROOM', roomID: roomID });
+                // Přidáno await pro stabilitu
+                await handleSystemMessages(ws, { type: 'LEAVE_ROOM', roomID: roomID });
             }
-            // Smažeme ho ze seznamu hráčů
             players.delete(ws.playerId);
+            clientToRoomMap.delete(ws.playerId); // Smažeme i mapování místnosti
         }
 
         ws.playerId = null;
         ws.username = null;
 
         console.log("🔄 Generuji novou identitu Hosta...");
-        handleSystemMessages(ws, { type: 'GUEST_JOIN' });
+        // Přidáno await, aby se nová identita poslala až po vyčištění staré
+        await handleSystemMessages(ws, { type: 'GUEST_JOIN' });
         
         console.log("✅ Odhlášení dokončeno.");
         return;
@@ -464,7 +462,8 @@ wss.on('connection', function connection(ws) {
         }
 
         // TADY BYLA CHYBA: Chybělo zde data.type === 'GUEST_JOIN'
-        if (data.type === 'GUEST_JOIN' || // <--- PŘIDÁNO
+        if (data.type === 'GUEST_JOIN' ||
+            data.type === 'LOGOUT_REQUEST' ||
             data.type === 'AUTH_REQUEST' ||
             data.type === 'CREATE_ROOM' ||
             data.type === 'JOIN_ROOM' ||
