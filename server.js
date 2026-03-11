@@ -143,6 +143,28 @@ gameCore = {
 async function handleSystemMessages(ws, data) {
     const { type, username, password, authType, roomID } = data;
     let response;
+    if (type === 'LOGOUT_REQUEST') {
+        console.log(`👤 Odhlášení hráče: ${ws.username} (ID: ${ws.playerId})`);
+
+        // 1. Pokud byl hráč v místnosti, odpojíme ho, aby nezůstal viset v lobby
+        const roomID = clientToRoomMap.get(ws.playerId);
+        if (roomID) {
+            handleSystemMessages(ws, { type: 'LEAVE_ROOM', roomID: roomID });
+        }
+
+        // 2. Odstraníme jeho identitu ze seznamu aktivních hráčů
+        players.delete(ws.playerId);
+        
+        // 3. Resetujeme identifikátory na aktuálním spojení
+        ws.playerId = null;
+        ws.username = null;
+
+        // 4. Okamžitě mu přidělíme novou identitu Hosta (stejně jako při startu)
+        handleSystemMessages(ws, { type: 'GUEST_JOIN' });
+        
+        console.log("✅ Odhlášení dokončeno, klientovi odeslána nová Host identita.");
+        return;
+    }
 
     if (type === 'GUEST_JOIN') {
         let isUnique = false;
