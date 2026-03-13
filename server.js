@@ -59,9 +59,10 @@ let gameCore = {};
 
 function broadcastGameState(roomID, specificMessage = null) {
     const data = getRoomData(roomID); 
-    if (!data) return;
+    if (!data || !data.room) return;
 
     const { room, allPlayersData } = data;
+    if (!room.currentPhrase) return;
     
     // kontrola hádanky
     const isFinished = room.remainingLetters.length === 0;
@@ -345,22 +346,35 @@ async function handleSystemMessages(ws, data) {
     
     if (type === 'JOIN_ROOM') {
         let roomToJoinID = roomID;
-        if (roomID === 'RANDOM') {
-    const availableRoom = Array.from(rooms.values()).find(r => 
-        r.isPublic === true && // Místnost musí být VEŘEJNÁ
-        Array.from(players.keys()).filter(p => clientToRoomMap.get(p) === r.id).length < 4
-    );
-    
-    if (availableRoom) {
-        roomToJoinID = availableRoom.id;
-    } else {
-        ws.send(JSON.stringify({ type: 'ROOM_FAILURE', message: 'Žádná veřejná místnost není volná.' }));
-        return;
-    }
-}
         
+        // 1. Logika pro náhodnou místnost (včetně kontroly isPublic a kapacity)
+        if (roomID === 'RANDOM') {
+            const availableRoom = Array.from(rooms.values()).find(r => 
+                r.isPublic === true && 
+                Array.from(players.keys()).filter(p => clientToRoomMap.get(p) === r.id).length < 4
+            );
+            
+            if (availableRoom) {
+                roomToJoinID = availableRoom.id;
+            } else {
+                ws.send(JSON.stringify({ type: 'ROOM_FAILURE', message: 'Žádná veřejná místnost není volná.' }));
+                return;
+            }
+        }
+        
+        // 2. Kontrola konkrétní místnosti (i té náhodně vybrané výše)
         const roomToJoin = rooms.get(roomToJoinID);
         if (roomToJoin) {
+            // --- TADY PŘIDÁME KONTROLU KAPACITY ---
+            const currentPlayersCount = Array.from(players.keys())
+                .filter(p => clientToRoomMap.get(p) === roomToJoinID).length;
+
+            if (currentPlayersCount >= 4) {
+                ws.send(JSON.stringify({ type: 'ROOM_FAILURE', message: 'Místnost je již plná (max 4 hráči).' }));
+                return;
+            }
+            // --------------------------------------
+
             clientToRoomMap.set(playerId, roomToJoinID);
             broadcastLobbyUpdate(roomToJoinID);
         } else {
