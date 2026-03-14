@@ -428,6 +428,13 @@ async function handleSystemMessages(ws, data) {
             // Pošleme všem pokyn k přepnutí scény
             broadcastToRoom(currentRoomID, JSON.stringify({ type: 'GAME_START' }));
 
+            const playersInRoom = Array.from(players.keys()).filter(p => clientToRoomMap.get(p) === currentRoomID);
+        broadcastToRoom(currentRoomID, JSON.stringify({ 
+            type: 'SCENE_READY_COUNT', 
+            readyCount: 0, 
+            totalCount: playersInRoom.length 
+        }));
+
             // POJISTKA: Start hry po 20s, i kdyby někdo neklikl na Ready
             if (roomState.forceStartTimer) clearTimeout(roomState.forceStartTimer);
             roomState.forceStartTimer = setTimeout(() => {
