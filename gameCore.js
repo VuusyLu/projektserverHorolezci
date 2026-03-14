@@ -136,6 +136,8 @@ function handlePlayerGuess(data, broadcastToRoom, broadcastGameState) {
 }
 
 // --- kontrola správných odpovědí
+// gameCore.js - Uprav metodu processRoundResults
+
 function processRoundResults(roomID, broadcastToRoom, broadcastGameState) {
     const roomState = rooms.get(roomID);
     if (!roomState) return;
@@ -144,57 +146,65 @@ function processRoundResults(roomID, broadcastToRoom, broadcastGameState) {
     roomState.isProcessing = true;
 
     const allResults = []; 
-    
     const allPlayersData = utils.getRoomData(roomID).allPlayersData;
+
+    // --- KLÍČOVÁ ZMĚNA: Kopie zbývajících písmen před vyhodnocením ---
+    // Uděláme si Set (množinu) unikátních písmen, která tam SKUTEČNĚ byla na startu kola
+    const lettersAvailableThisRound = new Set(roomState.remainingLetters);
+    // Budeme si ukládat, která písmena byla v tomto kole úspěšně uhodnuta
+    const guessedInThisRound = new Set();
 
     allPlayersData.forEach(playerData => {
         const playerId = playerData.id;
         const playerState = players.get(playerId); 
-        
         const guessData = roomState.currentRoundGuesses.get(playerId) || { type: 'NO_GUESS', letter: null };
         
         let response = { playerId: playerId, correct: false, pointsGained: 0, moveDistance: 0 };
-        
-        // --- ZPRACOVÁNÍ TAHU ---
-        if (guessData.type === 'NO_GUESS') {
-            const penalty = -1;
-            playerState.score = Math.max(0, playerState.score + penalty);
-            playerState.climberPosition = Math.max(0, playerState.climberPosition - 0.5);
-            
-            response.pointsGained = penalty;
-            response.moveDistance = penalty;
-            console.log(`SERVER[${roomID}]: ${playerState.username} NO_GUESS (Penalizace -1)`);
 
-        } else if (guessData.type === 'GUESS_LETTER' && guessData.letter) {
+        if (guessData.type === 'GUESS_LETTER' && guessData.letter) {
             const guessedLetter = guessData.letter.toUpperCase();
             
-            if (roomState.remainingLetters.includes(guessedLetter)) {
+            // Kontrolujeme proti naší kopii (Setu), ne proti měnícímu se poli
+            if (lettersAvailableThisRound.has(guessedLetter)) {
+                // SPRÁVNĚ - Písmeno v tajence bylo!
+                // Spočítáme body podle původního pole (kolikrát tam písmeno je celkem)
                 const count = roomState.remainingLetters.filter(c => c === guessedLetter).length;
                 const value = letterValues[guessedLetter] || 1; 
                 const points = value * count;
 
-                roomState.remainingLetters = roomState.remainingLetters.filter(c => c !== guessedLetter);
-                roomState.guessedLetters.add(guessedLetter);
-                
                 playerState.score += points;
                 playerState.climberPosition += points * 0.5;
                 
                 response.correct = true;
                 response.pointsGained = points;
-                response.moveDistance = points; 
-                console.log(`SERVER[${roomID}]: ${playerState.username} Tah SPRÁVNĚ (${guessedLetter}) +${points} bodů.`);
-                
+                response.moveDistance = points;
+
+                // Označíme si, že toto písmeno se má po vyhodnocení kola smazat
+                guessedInThisRound.add(guessedLetter);
             } else {
+                // ŠPATNĚ
                 const penalty = -10;
                 playerState.score = Math.max(0, playerState.score + penalty);
                 playerState.climberPosition = Math.max(0, playerState.climberPosition - 5.0);
                 
                 response.pointsGained = penalty;
                 response.moveDistance = penalty;
-                console.log(`SERVER[${roomID}]: ${playerState.username} Tah ŠPATNĚ (${guessedLetter}) -10 bodů.`);
             }
+        } else if (guessData.type === 'NO_GUESS') {
+            const penalty = -1;
+            playerState.score = Math.max(0, playerState.score + penalty);
+            playerState.climberPosition = Math.max(0, playerState.climberPosition - 0.5);
+            response.pointsGained = penalty;
+            response.moveDistance = penalty;
         }
+
         allResults.push(response);
+    });
+
+    // --- FINÁLNÍ ÚKLID: Smažeme všechna uhodnutá písmena z hlavního seznamu ---
+    guessedInThisRound.forEach(letter => {
+        roomState.remainingLetters = roomState.remainingLetters.filter(c => c !== letter);
+        roomState.guessedLetters.add(letter);
     });
 
     broadcastToRoom(roomID, JSON.stringify({ type: 'ROUND_RESULT', results: allResults }));
