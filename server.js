@@ -331,7 +331,8 @@ async function handleSystemMessages(ws, data) {
             id: newRoomID,
             hostID: playerId,
             isPublic: true,
-            targetClimbHeight: 0, 
+            targetClimbHeight: 0,
+            readyPlayers: new Set(),
             remainingLetters: [],
             guessedLetters: new Set(),
             isProcessing: false,
@@ -422,11 +423,40 @@ async function handleSystemMessages(ws, data) {
         const roomState = rooms.get(currentRoomID);
         
         if (roomState && roomState.hostID === playerId) {
-            broadcastToRoom(currentRoomID, JSON.stringify({ type: 'GAME_START' }));
+            roomState.readyForAction = new Set(); // Reset připravenosti v nové scéně
             
-            gameCore.initializeNewPuzzle(roomState, true).then(() => {
-                broadcastGameState(currentRoomID); 
-            });
+            // Pošleme všem pokyn k přepnutí scény
+            broadcastToRoom(currentRoomID, JSON.stringify({ type: 'GAME_START' }));
+
+            // POJISTKA: Start hry po 20s, i kdyby někdo neklikl na Ready
+            if (roomState.forceStartTimer) clearTimeout(roomState.forceStartTimer);
+            roomState.forceStartTimer = setTimeout(() => {
+                startGameSession(currentRoomID);
+            }, 20000); 
+        }
+        return;
+    }
+
+    if (type === 'CLIENT_SCENE_READY') {
+        const currentRoomID = clientToRoomMap.get(playerId);
+        const roomState = rooms.get(currentRoomID);
+        if (!roomState) return;
+
+        const playersInRoom = Array.from(players.keys()).filter(p => clientToRoomMap.get(p) === currentRoomID);
+
+        roomState.readyForAction.add(playerId);
+        
+        // Informujeme Unity o stavu 1/4, 2/4 atd.
+        broadcastToRoom(currentRoomID, JSON.stringify({ 
+            type: 'SCENE_READY_COUNT', 
+            readyCount: roomState.readyForAction.size,
+            totalCount: playersInRoom.length
+        }));
+
+        // Pokud jsou všichni Ready, startujeme hned
+        if (roomState.readyForAction.size === playersInRoom.length) {
+            if (roomState.forceStartTimer) clearTimeout(roomState.forceStartTimer);
+            startGameSession(currentRoomID);
         }
         return;
     }
@@ -472,12 +502,18 @@ function broadcastLobbyUpdate(roomID) {
 
     const { room, allPlayersData } = data;
     
+    // Ke každému hráči přilepíme informaci, jestli je Ready
+    const playersWithReady = allPlayersData.map(p => ({
+        ...p,
+        isReady: room.readyPlayers.has(p.id)
+    }));
+
     const message = {
         type: 'LOBBY_UPDATE',
         roomID: roomID,
         hostID: room.hostID,
-        isPublic: room.isPublic || false, // <--- PŘIDÁNO SEM
-        players: allPlayersData,
+        isPublic: room.isPublic || false,
+        players: playersWithReady, // Posíláme rozšířená data
     };
     broadcastToRoom(roomID, JSON.stringify(message));
 }
@@ -504,6 +540,7 @@ wss.on('connection', function connection(ws) {
             data.type === 'AUTH_REQUEST' ||
             data.type === 'CREATE_ROOM' ||
             data.type === 'JOIN_ROOM' ||
+            data.type === 'CLIENT_SCENE_READY' ||
             data.type === 'LEAVE_ROOM' ||
             data.type === 'SET_LOBBY_PUBLIC' ||
             data.type === 'START_GAME' ||
@@ -551,6 +588,14 @@ wss.on('connection', function connection(ws) {
         console.log('❌ Klient odpojen.');
     });
 });
+function startGameSession(roomID) {
+    const roomState = rooms.get(roomID);
+    if (!roomState || roomState.currentPhrase) return; // Pokud už hra běží, nedělej nic
+
+    gameCore.initializeNewPuzzle(roomState, true).then(() => {
+        broadcastGameState(roomID); 
+    }).catch(err => console.error("Chyba při startu sezení:", err));
+}
 
 server.listen(WS_PORT, '0.0.0.0', () => {
     console.log(`🚀 Server běží na portu ${WS_PORT} (HTTP + WebSocket)`);
