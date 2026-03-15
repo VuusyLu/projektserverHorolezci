@@ -112,6 +112,7 @@ function startNewRoundTimer(roomID, broadcastToRoom, broadcastGameState) {
     }, GUESS_TIME_LIMIT_SECONDS * 1000);
 }
 
+
 // --- registrace tahu hráčů
 function handlePlayerGuess(data, broadcastToRoom, broadcastGameState) {
     const { playerId, roomID, type, letter } = data;

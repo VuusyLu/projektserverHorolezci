@@ -510,6 +510,7 @@ async function handleSystemMessages(ws, data) {
         if (roomState && roomState.hostID === playerId) {
             roomState.readyForAction = new Set(); // Reset připravenosti v nové scéně
             
+            assignSpawnPositions(currentRoomID);
             // Pošleme všem pokyn k přepnutí scény
             broadcastToRoom(currentRoomID, JSON.stringify({ type: 'GAME_START' }));
 
@@ -595,7 +596,7 @@ if (type === 'PLACE_ANCHOR') {
         console.log(`SERVER: Přijat požadavek na ${type} od hráče ${playerId}`);
         const isDaily = (type === 'START_DAILY_CHALLENGE');
         const newRoomID = (isDaily ? "DAILY_" : "SOLO_") + generateUniqueID(4);
-
+        assignSpawnPositions(newRoomID);
         const p = players.get(playerId);
     if (p) {
         p.anchorsLeft = 3;
@@ -656,6 +657,22 @@ function broadcastLobbyUpdate(roomID) {
     broadcastToRoom(roomID, JSON.stringify(message));
 }
 
+function assignSpawnPositions(roomID) {
+    const playersInRoom = Array.from(players.values()).filter(p => clientToRoomMap.get(p.id) === roomID);
+    const count = playersInRoom.length;
+    
+    // Šířka hory je od -4 do 4 (celkem 8 jednotek)
+    const spacing = 8 / (count + 1);
+
+    playersInRoom.forEach((player, index) => {
+        player.xOffset = -4 + (spacing * (index + 1));
+        player.climberPosition = 0; // Start odspodu
+        player.score = 0;
+        player.anchorsLeft = 3;
+        player.anchorHeight = 0;
+        console.log(`[SPAWN] ${player.username} dostal X: ${player.xOffset.toFixed(2)}`);
+    });
+}
 
 // --- WEBSOCKET ŘÍZENÍ SPOJENÍ ---
 
