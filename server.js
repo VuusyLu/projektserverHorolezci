@@ -485,37 +485,35 @@ async function handleSystemMessages(ws, data) {
         }
         return;
     }
-    if (type === 'PLACE_ANCHOR') {
-        const currentRoomID = clientToRoomMap.get(playerId);
-        const roomState = rooms.get(currentRoomID);
-        const player = players.get(playerId);
+    // server.js - Uprav sekci PLACE_ANCHOR
+if (type === 'PLACE_ANCHOR') {
+    const currentRoomID = clientToRoomMap.get(playerId);
+    const roomState = rooms.get(currentRoomID);
+    const player = players.get(playerId);
+    
+    if (roomState && player && player.anchorsLeft > 0 && !roomState.currentRoundGuesses.has(playerId)) {
         
-        // KONTROLA: Aby nešlo položit kotvu 2x v jednom kole
-        if (roomState && player && player.anchorsLeft > 0 && !roomState.currentRoundGuesses.has(playerId)) {
-            
-            roomState.currentRoundGuesses.set(playerId, { type: 'PLACE_ANCHOR' });
-            
-            player.anchorsLeft -= 1;
-            player.anchorHeight = player.climberPosition;
+        // Zaznamenáme tah, ale NIC NEODEČÍTÁME!
+        roomState.currentRoundGuesses.set(playerId, { type: 'PLACE_ANCHOR' });
+        
+        console.log(`⚓ SERVER: ${player.username} nahlásil kotvu.`);
 
-            console.log(`⚓ SERVER: ${player.username} položil kotvu na ${player.anchorHeight}m.`);
+        // Tohle jen řekne ostatním, že hráč klikl (můžeš nechat pro animaci "přípravy")
+        // Ale skutečnou pozici a počet kotev pošle až ROUND_RESULT
+        broadcastToRoom(currentRoomID, JSON.stringify({ 
+            type: 'ANCHOR_PLACED', 
+            playerId: playerId
+            // anchorHeight a anchorsLeft odtud raději smaž, pošle je processRoundResults
+        }));
 
-            broadcastToRoom(currentRoomID, JSON.stringify({ 
-                type: 'ANCHOR_PLACED', 
-                playerId: playerId,
-                anchorHeight: player.anchorHeight,
-                anchorsLeft: player.anchorsLeft
-            }));
-
-            const playersInRoom = Array.from(players.keys()).filter(p => clientToRoomMap.get(p) === currentRoomID);
-            if (roomState.currentRoundGuesses.size === playersInRoom.length) {
-                if (roomState.roundTimer) clearTimeout(roomState.roundTimer);
-                // Voláme gameCore funkci přímo z objektu, který jsme si nahoře definovali
-                gameCore.processRoundResults(currentRoomID);
-            }
+        const playersInRoom = Array.from(players.keys()).filter(p => clientToRoomMap.get(p) === currentRoomID);
+        if (roomState.currentRoundGuesses.size === playersInRoom.length) {
+            if (roomState.roundTimer) clearTimeout(roomState.roundTimer);
+            gameCore.processRoundResults(currentRoomID);
         }
-        return;
     }
+    return;
+}
     
     if (type === 'START_SOLO_GAME' || type === 'START_DAILY_CHALLENGE') {
         console.log(`SERVER: Přijat požadavek na ${type} od hráče ${playerId}`);
