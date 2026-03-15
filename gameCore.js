@@ -136,7 +136,6 @@ function handlePlayerGuess(data, broadcastToRoom, broadcastGameState) {
 }
 
 // --- kontrola správných odpovědí
-// gameCore.js - Uprav metodu processRoundResults
 
 function processRoundResults(roomID, broadcastToRoom, broadcastGameState) {
     const roomState = rooms.get(roomID);
