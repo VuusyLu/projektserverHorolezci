@@ -604,7 +604,7 @@ wss.on('connection', function connection(ws) {
         const roomID = clientToRoomMap.get(ws.playerId); 
         if (!roomID) return; 
 
-        if (data.type === 'GUESS_LETTER' || data.type === 'NO_GUESS'|| data.type === 'PLACE_ANCHOR') {
+        if (data.type === 'GUESS_LETTER' || data.type === 'NO_GUESS') {
             const fullGuessData = {
                 ...data, 
                 playerId: ws.playerId,
