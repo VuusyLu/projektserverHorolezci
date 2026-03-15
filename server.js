@@ -469,25 +469,39 @@ async function handleSystemMessages(ws, data) {
         }
         return;
     }
-    // Pokud přijde typ PLACE_ANCHOR, uložíme ho jako tah v tomto kole
-    if (data.type === 'PLACE_ANCHOR') {
-    roomState.currentRoundGuesses.set(playerId, { type: 'PLACE_ANCHOR' });
-    
-    // Provedeme samotné položení kotvy (snížení počtu a uložení výšky)
-    const player = players.get(playerId);
-    if (player && player.anchorsLeft > 0) {
-        player.anchorsLeft -= 1;
-        player.anchorHeight = player.climberPosition;
-    }
+    if (type === 'PLACE_ANCHOR') {
+        const currentRoomID = clientToRoomMap.get(playerId);
+        const roomState = rooms.get(currentRoomID); // <--- TATO ŘÁDKA CHYBĚLA
+        const player = players.get(playerId);
+        
+        if (roomState && player && player.anchorsLeft > 0) {
+            // 1. Zaznamenáme tah do aktuálního kola hry (aby server nečekal na písmeno)
+            roomState.currentRoundGuesses.set(playerId, { type: 'PLACE_ANCHOR' });
+            
+            // 2. Provedeme odečtení kotvy
+            player.anchorsLeft -= 1;
+            player.anchorHeight = player.climberPosition;
 
-    // Zkontrolujeme, jestli už všichni odhadli (stejná logika jako u písmen)
-    const allPlayersInRoom = utils.getRoomData(roomID).allPlayersData.length;
-    if (roomState.currentRoundGuesses.size === allPlayersInRoom) {
-        if (roomState.roundTimer) clearTimeout(roomState.roundTimer);
-        processRoundResults(roomID, broadcastToRoom, broadcastGameState);
+            console.log(`⚓ SERVER: ${player.username} položil kotvu na ${player.anchorHeight}m. Zbývá: ${player.anchorsLeft}`);
+
+            // 3. Pošleme potvrzení pro UI v Unity
+            broadcastToRoom(currentRoomID, JSON.stringify({ 
+                type: 'ANCHOR_PLACED', 
+                playerId: playerId,
+                anchorHeight: player.anchorHeight,
+                anchorsLeft: player.anchorsLeft
+            }));
+
+            // 4. Zkontrolujeme, jestli po položení kotvy už náhodou neodpověděli všichni
+            const playersInRoom = Array.from(players.keys()).filter(p => clientToRoomMap.get(p) === currentRoomID);
+            if (roomState.currentRoundGuesses.size === playersInRoom.length) {
+                console.log(`SERVER[${currentRoomID}]: Všichni odpověděli (včetně kotvy). Předčasně vyhodnocuji.`);
+                if (roomState.roundTimer) clearTimeout(roomState.roundTimer);
+                gameCore.processRoundResults(currentRoomID);
+            }
+        }
+        return;
     }
-    return;
-}
     
     if (type === 'START_SOLO_GAME' || type === 'START_DAILY_CHALLENGE') {
         console.log(`SERVER: Přijat požadavek na ${type} od hráče ${playerId}`);
