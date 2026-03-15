@@ -97,15 +97,19 @@ function broadcastGameState(roomID, specificMessage = null) {
         console.log(`SERVER[${roomID}]: Hádanka vyluštěna.`);
 
         if (room.isDailyChallenge) {
-            // KONEC DAILY CHALLENGE
+            // --- NOVINKA: ULOŽENÍ SKÓRE PŘI DOKONČENÍ ---
+            const playersInRoom = Array.from(players.keys()).filter(pid => clientToRoomMap.get(pid) === roomID);
+            playersInRoom.forEach(pid => {
+                const p = players.get(pid);
+                if (p) saveDailyScoreIfRegistered(pid, p.score);
+            });
             setTimeout(() => {
                 broadcastToRoom(roomID, JSON.stringify({ 
                     type: 'GAME_OVER_DAILY', 
                     message: 'Gratulujeme! Dokončil jsi dnešní výzvu.' 
                 }));
-                // Místnost po chvíli smažeme z paměti
                 setTimeout(() => rooms.delete(roomID), 1000);
-            }, 5000); 
+            }, 5000);
         } else {
             // POKRAČOVÁNÍ V SOLO / MULTI (nová hádanka)
             setTimeout(() => {
@@ -139,6 +143,33 @@ gameCore = {
 };
 // --- KONEC DEKLARACE ---
 
+// Pomocná funkce pro zápis denního skóre
+function saveDailyScoreIfRegistered(playerId, score) {
+    const player = players.get(playerId);
+
+    // KONTROLA: Hosty (GUEST_) ignorujeme, ukládáme jen registrované
+    if (!player || player.isGuest || playerId.startsWith('GUEST_')) {
+        console.log(`ℹ️ [STATS] Skóre pro ${playerId} se neukládá (Hráč je Guest).`);
+        return;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    // INSERT OR IGNORE zajistí, že se započítá jen první pokus dne
+    db.run(
+        "INSERT OR IGNORE INTO daily_scores (playerId, username, score, date) VALUES (?, ?, ?, ?)",
+        [player.id, player.username, score, today],
+        function(err) {
+            if (err) {
+                console.error("❌ [DB ERROR] Chyba při ukládání denního skóre:", err.message);
+            } else if (this.changes > 0) {
+                console.log(`🏆 [STATS] Nové denní skóre pro ${player.username}: ${score}`);
+            } else {
+                console.log(`ℹ️ [STATS] Hráč ${player.username} už dnes pokus vyčerpal.`);
+            }
+        }
+    );
+}
 
 // --- ZPRACOVÁNÍ ZPRÁV ---
 async function handleSystemMessages(ws, data) {
@@ -353,6 +384,51 @@ async function handleSystemMessages(ws, data) {
         broadcastLobbyUpdate(newRoomID);
         return;
     }
+    if (type === 'GET_PROFILE_STATS') {
+    const today = new Date().toISOString().slice(0, 10);
+    const playerId = ws.playerId;
+
+    // 1. Dotaz na Globální TOP 3 (Součet všech bodů v historii)
+    const topQuery = `
+        SELECT username, SUM(score) as total 
+        FROM daily_scores 
+        GROUP BY playerId 
+        ORDER BY total DESC 
+        LIMIT 3`;
+
+    db.all(topQuery, [], (err, topRows) => {
+        if (err) {
+            console.error("❌ Chyba při načítání TOP 3:", err.message);
+            return;
+        }
+
+        // 2. Dotaz na Osobní statistiky (Dnešní nejlepší a Celkový součet)
+        const personalQuery = `
+            SELECT 
+                SUM(score) as lifetime,
+                MAX(CASE WHEN date = ? THEN score ELSE 0 END) as today
+            FROM daily_scores 
+            WHERE playerId = ?`;
+
+        db.get(personalQuery, [today, playerId], (err, personalRow) => {
+            if (err) {
+                console.error("❌ Chyba při načítání osobních statistik:", err.message);
+                return;
+            }
+
+            // 3. Odeslání dat zpět klientovi
+            ws.send(JSON.stringify({
+                type: 'PROFILE_STATS_DATA',
+                top3: topRows || [],
+                myToday: personalRow ? (personalRow.today || 0) : 0,
+                myLifetime: personalRow ? (personalRow.lifetime || 0) : 0
+            }));
+            
+            console.log(`📊 Statistiky odeslány hráči: ${ws.username}`);
+        });
+    });
+    return;
+}
     
     if (type === 'JOIN_ROOM') {
         let roomToJoinID = roomID;
@@ -596,12 +672,12 @@ wss.on('connection', function connection(ws) {
             return;
         }
 
-        // TADY BYLA CHYBA: Chybělo zde data.type === 'GUEST_JOIN'
         if (data.type === 'GUEST_JOIN' ||
             data.type === 'LOGOUT_REQUEST' ||
             data.type === 'AUTH_REQUEST' ||
             data.type === 'CREATE_ROOM' ||
             data.type === 'JOIN_ROOM' ||
+            data.type === 'GET_PROFILE_STATS' ||
             data.type === 'CLIENT_SCENE_READY' ||
             data.type === 'PLACE_ANCHOR' ||
             data.type === 'LEAVE_ROOM' ||

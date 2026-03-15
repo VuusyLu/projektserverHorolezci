@@ -39,6 +39,16 @@ function initializeDatabase() {
             FOREIGN KEY (category_id) REFERENCES categories (id)
         )`);
 
+        //tabulka pro skore
+        db.run(`CREATE TABLE IF NOT EXISTS daily_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            playerId TEXT NOT NULL,
+            username TEXT NOT NULL,
+            score INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            UNIQUE(playerId, date) -- Zajišťuje pouze jeden záznam na hráče denně
+        )`);
+
         // --- INICIALIZACE DAT ---
         // Používáme INSERT OR IGNORE, aby se data při každém startu neduplikovala
         const categories = ['Technologie', 'Sport', 'Příroda', 'Citáty'];
