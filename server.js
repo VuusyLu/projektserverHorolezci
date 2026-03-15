@@ -191,6 +191,8 @@ async function handleSystemMessages(ws, data) {
             username: guestUsername, 
             score: 0, 
             climberPosition: 0,
+            anchorsLeft: 3,
+            anchorHeight: 0,
             isGuest: true 
         });
 
@@ -307,7 +309,7 @@ async function handleSystemMessages(ws, data) {
                     };
 
                     players.set(row.playerId, { 
-                        ws, id: row.playerId, username: row.username, score: 0, climberPosition: 0, isGuest: false 
+                        ws, id: row.playerId, username: row.username, score: 0, climberPosition: 0,anchorsLeft: 3,anchorHeight: 0, isGuest: false 
                     });
 
                     ws.playerId = row.playerId;
@@ -467,6 +469,25 @@ async function handleSystemMessages(ws, data) {
         }
         return;
     }
+    // Pokud přijde typ PLACE_ANCHOR, uložíme ho jako tah v tomto kole
+    if (data.type === 'PLACE_ANCHOR') {
+    roomState.currentRoundGuesses.set(playerId, { type: 'PLACE_ANCHOR' });
+    
+    // Provedeme samotné položení kotvy (snížení počtu a uložení výšky)
+    const player = players.get(playerId);
+    if (player && player.anchorsLeft > 0) {
+        player.anchorsLeft -= 1;
+        player.anchorHeight = player.climberPosition;
+    }
+
+    // Zkontrolujeme, jestli už všichni odhadli (stejná logika jako u písmen)
+    const allPlayersInRoom = utils.getRoomData(roomID).allPlayersData.length;
+    if (roomState.currentRoundGuesses.size === allPlayersInRoom) {
+        if (roomState.roundTimer) clearTimeout(roomState.roundTimer);
+        processRoundResults(roomID, broadcastToRoom, broadcastGameState);
+    }
+    return;
+}
     
     if (type === 'START_SOLO_GAME' || type === 'START_DAILY_CHALLENGE') {
         console.log(`SERVER: Přijat požadavek na ${type} od hráče ${playerId}`);
@@ -548,6 +569,7 @@ wss.on('connection', function connection(ws) {
             data.type === 'CREATE_ROOM' ||
             data.type === 'JOIN_ROOM' ||
             data.type === 'CLIENT_SCENE_READY' ||
+            data.type === 'PLACE_ANCHOR' ||
             data.type === 'LEAVE_ROOM' ||
             data.type === 'SET_LOBBY_PUBLIC' ||
             data.type === 'START_GAME' ||
@@ -568,7 +590,7 @@ wss.on('connection', function connection(ws) {
         const roomID = clientToRoomMap.get(ws.playerId); 
         if (!roomID) return; 
 
-        if (data.type === 'GUESS_LETTER' || data.type === 'NO_GUESS') {
+        if (data.type === 'GUESS_LETTER' || data.type === 'NO_GUESS'|| data.type === 'PLACE_ANCHOR') {
             const fullGuessData = {
                 ...data, 
                 playerId: ws.playerId,

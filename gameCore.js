@@ -148,10 +148,8 @@ function processRoundResults(roomID, broadcastToRoom, broadcastGameState) {
     const allResults = []; 
     const allPlayersData = utils.getRoomData(roomID).allPlayersData;
 
-    // --- KLÍČOVÁ ZMĚNA: Kopie zbývajících písmen před vyhodnocením ---
-    // Uděláme si Set (množinu) unikátních písmen, která tam SKUTEČNĚ byla na startu kola
+    // Kopie zbývajících písmen před vyhodnocením (pro férový multiplayer)
     const lettersAvailableThisRound = new Set(roomState.remainingLetters);
-    // Budeme si ukládat, která písmena byla v tomto kole úspěšně uhodnuta
     const guessedInThisRound = new Set();
 
     allPlayersData.forEach(playerData => {
@@ -161,13 +159,23 @@ function processRoundResults(roomID, broadcastToRoom, broadcastGameState) {
         
         let response = { playerId: playerId, correct: false, pointsGained: 0, moveDistance: 0 };
 
-        if (guessData.type === 'GUESS_LETTER' && guessData.letter) {
+        // --- 1. LOGIKA KOTVY ---
+        if (guessData.type === 'PLACE_ANCHOR') {
+            if (playerState.anchorsLeft > 0) {
+                playerState.anchorsLeft -= 1;
+                playerState.anchorHeight = playerState.climberPosition;
+                
+                response.correct = true; // Zelený efekt v Unity
+                response.pointsGained = 0;
+                response.moveDistance = 0; // Hráč stojí, ale je ukotven
+                console.log(`SERVER[${roomID}]: ${playerState.username} se ukotvil na ${playerState.anchorHeight}m.`);
+            }
+        } 
+        // --- 2. LOGIKA SPRÁVNÉHO PÍSMENE ---
+        else if (guessData.type === 'GUESS_LETTER' && guessData.letter) {
             const guessedLetter = guessData.letter.toUpperCase();
             
-            // Kontrolujeme proti naší kopii (Setu), ne proti měnícímu se poli
             if (lettersAvailableThisRound.has(guessedLetter)) {
-                // SPRÁVNĚ - Písmeno v tajence bylo!
-                // Spočítáme body podle původního pole (kolikrát tam písmeno je celkem)
                 const count = roomState.remainingLetters.filter(c => c === guessedLetter).length;
                 const value = letterValues[guessedLetter] || 1; 
                 const points = value * count;
@@ -178,30 +186,42 @@ function processRoundResults(roomID, broadcastToRoom, broadcastGameState) {
                 response.correct = true;
                 response.pointsGained = points;
                 response.moveDistance = points;
-
-                // Označíme si, že toto písmeno se má po vyhodnocení kola smazat
                 guessedInThisRound.add(guessedLetter);
-            } else {
-                // ŠPATNĚ
+            } 
+            // --- 3. LOGIKA PÁDU (CHYBA) ---
+            else {
                 const penalty = -10;
                 playerState.score = Math.max(0, playerState.score + penalty);
-                playerState.climberPosition = Math.max(0, playerState.climberPosition - 5.0);
                 
+                let newPos = playerState.climberPosition - 5.0;
+                if (newPos < playerState.anchorHeight) {
+                    newPos = playerState.anchorHeight; // Kotva hráče zachrání
+                }
+                
+                response.moveDistance = newPos - playerState.climberPosition;
+                playerState.climberPosition = newPos;
                 response.pointsGained = penalty;
-                response.moveDistance = penalty;
             }
-        } else if (guessData.type === 'NO_GUESS') {
+        } 
+        // --- 4. LOGIKA PÁDU (TIMEOUT) ---
+        else if (guessData.type === 'NO_GUESS') {
             const penalty = -1;
             playerState.score = Math.max(0, playerState.score + penalty);
-            playerState.climberPosition = Math.max(0, playerState.climberPosition - 0.5);
+            
+            let newPos = playerState.climberPosition - 0.5;
+            if (newPos < playerState.anchorHeight) {
+                newPos = playerState.anchorHeight;
+            }
+            
+            response.moveDistance = newPos - playerState.climberPosition;
+            playerState.climberPosition = newPos;
             response.pointsGained = penalty;
-            response.moveDistance = penalty;
         }
 
         allResults.push(response);
     });
 
-    // --- FINÁLNÍ ÚKLID: Smažeme všechna uhodnutá písmena z hlavního seznamu ---
+    // Úklid uhodnutých písmen
     guessedInThisRound.forEach(letter => {
         roomState.remainingLetters = roomState.remainingLetters.filter(c => c !== letter);
         roomState.guessedLetters.add(letter);

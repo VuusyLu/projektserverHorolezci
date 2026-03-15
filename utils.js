@@ -19,6 +19,9 @@ function getRoomData(roomID) {
                 score: state.score,
                 climberPosition: state.climberPosition,
                 isHost: room.hostID === playerId,
+                // --- NOVINKA: Přidání kotev do dat pro Unity ---
+                anchorsLeft: state.anchorsLeft,
+                anchorHeight: state.anchorHeight
             });
         }
     }
