@@ -328,6 +328,13 @@ async function handleSystemMessages(ws, data) {
     const playerId = ws.playerId;
 
     if (type === 'CREATE_ROOM') {
+        const p = players.get(playerId);
+    if (p) {
+        p.anchorsLeft = 3;
+        p.anchorHeight = 0;
+        p.score = 0;
+        p.climberPosition = 0;
+    }
         const newRoomID = generateUniqueID(6);
         const newRoom = {
             id: newRoomID,
@@ -431,6 +438,15 @@ async function handleSystemMessages(ws, data) {
             broadcastToRoom(currentRoomID, JSON.stringify({ type: 'GAME_START' }));
 
             const playersInRoom = Array.from(players.keys()).filter(p => clientToRoomMap.get(p) === currentRoomID);
+            playersInRoom.forEach(pid => {
+            const p = players.get(pid);
+            if (p) {
+                p.anchorsLeft = 3;
+                p.anchorHeight = 0;
+                p.score = 0;
+                p.climberPosition = 0;
+            }
+        });
         broadcastToRoom(currentRoomID, JSON.stringify({ 
             type: 'SCENE_READY_COUNT', 
             readyCount: 0, 
@@ -471,20 +487,19 @@ async function handleSystemMessages(ws, data) {
     }
     if (type === 'PLACE_ANCHOR') {
         const currentRoomID = clientToRoomMap.get(playerId);
-        const roomState = rooms.get(currentRoomID); // <--- TATO ŘÁDKA CHYBĚLA
+        const roomState = rooms.get(currentRoomID);
         const player = players.get(playerId);
         
-        if (roomState && player && player.anchorsLeft > 0) {
-            // 1. Zaznamenáme tah do aktuálního kola hry (aby server nečekal na písmeno)
+        // KONTROLA: Aby nešlo položit kotvu 2x v jednom kole
+        if (roomState && player && player.anchorsLeft > 0 && !roomState.currentRoundGuesses.has(playerId)) {
+            
             roomState.currentRoundGuesses.set(playerId, { type: 'PLACE_ANCHOR' });
             
-            // 2. Provedeme odečtení kotvy
             player.anchorsLeft -= 1;
             player.anchorHeight = player.climberPosition;
 
-            console.log(`⚓ SERVER: ${player.username} položil kotvu na ${player.anchorHeight}m. Zbývá: ${player.anchorsLeft}`);
+            console.log(`⚓ SERVER: ${player.username} položil kotvu na ${player.anchorHeight}m.`);
 
-            // 3. Pošleme potvrzení pro UI v Unity
             broadcastToRoom(currentRoomID, JSON.stringify({ 
                 type: 'ANCHOR_PLACED', 
                 playerId: playerId,
@@ -492,11 +507,10 @@ async function handleSystemMessages(ws, data) {
                 anchorsLeft: player.anchorsLeft
             }));
 
-            // 4. Zkontrolujeme, jestli po položení kotvy už náhodou neodpověděli všichni
             const playersInRoom = Array.from(players.keys()).filter(p => clientToRoomMap.get(p) === currentRoomID);
             if (roomState.currentRoundGuesses.size === playersInRoom.length) {
-                console.log(`SERVER[${currentRoomID}]: Všichni odpověděli (včetně kotvy). Předčasně vyhodnocuji.`);
                 if (roomState.roundTimer) clearTimeout(roomState.roundTimer);
+                // Voláme gameCore funkci přímo z objektu, který jsme si nahoře definovali
                 gameCore.processRoundResults(currentRoomID);
             }
         }
@@ -507,6 +521,14 @@ async function handleSystemMessages(ws, data) {
         console.log(`SERVER: Přijat požadavek na ${type} od hráče ${playerId}`);
         const isDaily = (type === 'START_DAILY_CHALLENGE');
         const newRoomID = (isDaily ? "DAILY_" : "SOLO_") + generateUniqueID(4);
+
+        const p = players.get(playerId);
+    if (p) {
+        p.anchorsLeft = 3;
+        p.anchorHeight = 0;
+        p.score = 0;
+        p.climberPosition = 0;
+    }
     
         const newRoom = {
             id: newRoomID,
